@@ -95,7 +95,7 @@ object BoardSolver {
       lines.zipWithIndex.foldLeft(emptyBoard) { case (rowBoard, (line, rowIdx)) =>
         line.toCharArray.zipWithIndex.foldLeft(rowBoard) {
           case (columnBoard, (chr, columnIdx)) =>
-            columnBoard.set(columnIdx, rowIdx, Mark.fromChar(chr))
+            columnBoard.set(rowIdx, columnIdx, Mark.fromChar(chr))
         }
       }
     }
