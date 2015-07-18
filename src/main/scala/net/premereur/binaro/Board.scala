@@ -191,4 +191,6 @@ object X extends App {
   import BoardSolver._
 
   println(solve(Board("..1...|0...11|00..1.|..1..0|...1..|1...0.")))
+  println()
+  println(solve(Board("11....|...0.0|......|...1..|..0..0|.0.00.")))
 }
