@@ -1,5 +1,6 @@
 package net.premereur.binaro
 
+import scala.annotation.tailrec
 import scalaz.Scalaz._
 import scalaz._
 
@@ -28,7 +29,7 @@ object BoardSolver {
   class Board(rows: MarkBundle,
               rowCounts: MarkSummary,
               columnCounts: MarkSummary,
-              version: Int = 0) {
+              val version: Int = 0) {
 
     import Board._
 
@@ -101,76 +102,84 @@ object BoardSolver {
 
     def update[A](seq: IndexedSeq[A], idx: Int, f: A => A) = seq.updated(idx, f(seq(idx)))
 
-    def solve(board: Board) = {
-      def extendDoubles(board: Board, indexer: Indexer): Board = {
-        (0 until (indexer.limit - 2)).foldLeft(board) { (brd, idx) =>
-          val pos1 = indexer.get(brd, idx)
-          val pos2 = indexer.get(brd, idx + 1)
-          val pos3 = indexer.get(brd, idx + 2)
-          if (pos1.isKnown && pos1 == pos2) {
-            // XX_ => XXY
-            indexer.set(brd, idx + 2, pos1.complement)
-          } else if (pos2.isKnown && pos2 == pos3) {
-            // _XX => YXX
-            indexer.set(brd, idx, pos2.complement)
-          } else if (pos1.isKnown && pos1 == pos3) {
-            // X_X => XYX
-            indexer.set(brd, idx + 1, pos1.complement)
-          } else {
-            brd
+    @tailrec
+    def solve(board: Board):Board = {
+      def solveOnce(baord: Board) = {
+        def extendDoubles(board: Board, indexer: Indexer): Board = {
+          (0 until (indexer.limit - 2)).foldLeft(board) { (brd, idx) =>
+            val pos1 = indexer.get(brd, idx)
+            val pos2 = indexer.get(brd, idx + 1)
+            val pos3 = indexer.get(brd, idx + 2)
+            if (pos1.isKnown && pos1 == pos2) {
+              // XX_ => XXY
+              indexer.set(brd, idx + 2, pos1.complement)
+            } else if (pos2.isKnown && pos2 == pos3) {
+              // _XX => YXX
+              indexer.set(brd, idx, pos2.complement)
+            } else if (pos1.isKnown && pos1 == pos3) {
+              // X_X => XYX
+              indexer.set(brd, idx + 1, pos1.complement)
+            } else {
+              brd
+            }
           }
         }
-      }
 
-      def countSliceMarks(board: Board, indexer: Indexer): (Int, Int) = {
-        (0 until indexer.limit).foldLeft((0, 0)) { (counts, idx) =>
-          if (indexer.get(board, idx) == ZERO) {
-            (counts._1 + 1, counts._2)
-          } else if (indexer.get(board, idx) == ONE) {
-            (counts._1, counts._2 + 1)
-          } else {
-            counts
+        def countSliceMarks(board: Board, indexer: Indexer): (Int, Int) = {
+          (0 until indexer.limit).foldLeft((0, 0)) { (counts, idx) =>
+            if (indexer.get(board, idx) == ZERO) {
+              (counts._1 + 1, counts._2)
+            } else if (indexer.get(board, idx) == ONE) {
+              (counts._1, counts._2 + 1)
+            } else {
+              counts
+            }
           }
         }
-      }
 
-
-      def fillIfComplete(board: Board, indexer: Indexer): Board = {
-        def fillAllMissing(mark: Mark) = (0 until indexer.limit).foldLeft(board) { (brd, idx) =>
-          if (!indexer.get(brd, idx).isKnown) {
-            indexer.set(brd, idx, mark)
+        def fillIfComplete(board: Board, indexer: Indexer): Board = {
+          def fillAllMissing(mark: Mark) = (0 until indexer.limit).foldLeft(board) { (brd, idx) =>
+            if (!indexer.get(brd, idx).isKnown) {
+              indexer.set(brd, idx, mark)
+            } else {
+              brd
+            }
+          }
+          val counts = countSliceMarks(board, indexer)
+          if (counts._1 == indexer.limit / 2 && counts._1 != counts._2) {
+            fillAllMissing(ONE)
+          } else if (counts._2 == indexer.limit / 2 && counts._1 != counts._2) {
+            fillAllMissing(ZERO)
           } else {
-            brd
+            board
           }
         }
-        val counts = countSliceMarks(board, indexer)
-        if (counts._1 == indexer.limit / 2 && counts._1 != counts._2) {
-          fillAllMissing(ONE)
-        } else if (counts._2 == indexer.limit / 2 && counts._1 != counts._2) {
-          fillAllMissing(ZERO)
-        } else {
-          board
-        }
+
+        def forAllRows(board: Board, f: (Board, Indexer) => Board): Board =
+          (0 until board.numRows).foldLeft(board) { (brd, rowIdx) =>
+            f(brd, board.rowIndexer(rowIdx))
+          }
+
+        def forAllColumns(board: Board, f: (Board, Indexer) => Board): Board =
+          (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
+            f(brd, board.columnIndexer(columnIdx))
+          }
+
+        def forAllRowsAndColumns(board: Board, f: (Board, Indexer) => Board): Board =
+          forAllColumns(forAllRows(board, f), f)
+
+        val (brd, _) = (for {
+          _ <- modify(forAllRowsAndColumns(_: Board, extendDoubles))
+          _ <- modify(forAllRowsAndColumns(_: Board, fillIfComplete))
+        } yield ()).run(board)
+        brd
       }
-
-      def forAllRows(board: Board, f: (Board, Indexer) => Board): Board =
-        (0 until board.numRows).foldLeft(board) { (brd, rowIdx) =>
-          f(brd, board.rowIndexer(rowIdx))
-        }
-
-      def forAllColumns(board: Board, f: (Board, Indexer) => Board): Board =
-        (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
-          f(brd, board.columnIndexer(columnIdx))
-        }
-
-      def forAllRowsAndColumns(board: Board, f: (Board, Indexer) => Board): Board =
-        forAllColumns(forAllRows(board, f), f)
-
-      val (brd, _) = (for {
-        _ <- modify(forAllRowsAndColumns(_: Board, extendDoubles))
-        _ <- modify(forAllRowsAndColumns(_: Board, fillIfComplete))
-      } yield ()).run(board)
-      brd
+      val solved = solveOnce(board)
+      if ( board.version == solved.version) {
+        solved
+      } else {
+        solve(solved)
+      }
     }
   }
 
