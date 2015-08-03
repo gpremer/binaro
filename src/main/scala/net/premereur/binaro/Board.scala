@@ -11,6 +11,8 @@ object BoardSolver {
 
     def set(board: Board, idx: Int, mark: Mark): Board
 
+    def summaryCount: MarkCount
+
     def limit: Int
   }
 
@@ -24,11 +26,12 @@ object BoardSolver {
 
   type MarkSegment = IndexedSeq[Mark]
   type MarkBundle = IndexedSeq[MarkSegment]
-  type MarkSummary = IndexedSeq[MarkCount]
+  type SegmentSummary = IndexedSeq[MarkCount]
 
   class Board(rows: MarkBundle,
-              rowCounts: MarkSummary,
-              columnCounts: MarkSummary,
+              columns: MarkBundle,
+              val rowCounts: SegmentSummary,
+              val columnCounts: SegmentSummary,
               val version: Int = 0) {
 
     import Board._
@@ -41,6 +44,8 @@ object BoardSolver {
 
       override def set(board: Board, columnIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
 
+      override def summaryCount = rowCounts(rowIdx)
+
       val limit = numColumns
     }
 
@@ -48,6 +53,8 @@ object BoardSolver {
       override def get(board: Board, rowIdx: Int): Mark = board(rowIdx, columnIdx)
 
       override def set(board: Board, rowIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
+
+      override def summaryCount = rowCounts(columnIdx)
 
       val limit = numRows
     }
@@ -58,6 +65,7 @@ object BoardSolver {
       if (this(rowIdx, columnIdx) != mark) {
         new Board(
           update(rows, rowIdx, update(_: MarkSegment, columnIdx, { _: Mark => mark })),
+          update(columns, columnIdx, update(_: MarkSegment, rowIdx, { _: Mark => mark })),
           update(rowCounts, rowIdx, (_: MarkCount).add(mark)),
           update(columnCounts, columnIdx, (_: MarkCount).add(mark)),
           version + 1)
@@ -88,6 +96,7 @@ object BoardSolver {
 
       val emptyBoard = new Board(
         rows = Vector.fill(numRows)(Vector.fill(numColumns)(UNKNOWN)),
+        columns = Vector.fill(numColumns)(Vector.fill(numRows)(UNKNOWN)),
         rowCounts = Vector.fill(numRows)(MarkCount(0, 0)),
         columnCounts = Vector.fill(numColumns)(MarkCount(0, 0))
       )
@@ -102,84 +111,141 @@ object BoardSolver {
 
     def update[A](seq: IndexedSeq[A], idx: Int, f: A => A) = seq.updated(idx, f(seq(idx)))
 
-    @tailrec
-    def solve(board: Board):Board = {
-      def solveOnce(baord: Board) = {
-        def extendDoubles(board: Board, indexer: Indexer): Board = {
-          (0 until (indexer.limit - 2)).foldLeft(board) { (brd, idx) =>
-            val pos1 = indexer.get(brd, idx)
-            val pos2 = indexer.get(brd, idx + 1)
-            val pos3 = indexer.get(brd, idx + 2)
-            if (pos1.isKnown && pos1 == pos2) {
-              // XX_ => XXY
-              indexer.set(brd, idx + 2, pos1.complement)
-            } else if (pos2.isKnown && pos2 == pos3) {
-              // _XX => YXX
-              indexer.set(brd, idx, pos2.complement)
-            } else if (pos1.isKnown && pos1 == pos3) {
-              // X_X => XYX
-              indexer.set(brd, idx + 1, pos1.complement)
-            } else {
-              brd
-            }
-          }
-        }
+    def solve(board: Board): Board = {
+      def allValidSegments(length: Int): MarkBundle = {
+        def allSegments(numZeroesLeft: Int, numOnesLeft: Int,
+                        lastMark: Option[Mark], nextToLastMark: Option[Mark],
+                        segment: MarkSegment, segments: MarkBundle): MarkBundle = {
+          def zeroAllowed = numZeroesLeft > 0 && (nextToLastMark.getOrElse(ONE) != ZERO || lastMark.getOrElse(ONE) != ZERO)
+          def oneAllowed = numOnesLeft > 0 && (nextToLastMark.getOrElse(ZERO) != ONE || lastMark.getOrElse(ZERO) != ONE)
 
-        def countSliceMarks(board: Board, indexer: Indexer): (Int, Int) = {
-          (0 until indexer.limit).foldLeft((0, 0)) { (counts, idx) =>
-            if (indexer.get(board, idx) == ZERO) {
-              (counts._1 + 1, counts._2)
-            } else if (indexer.get(board, idx) == ONE) {
-              (counts._1, counts._2 + 1)
-            } else {
-              counts
-            }
-          }
-        }
 
-        def fillIfComplete(board: Board, indexer: Indexer): Board = {
-          def fillAllMissing(mark: Mark) = (0 until indexer.limit).foldLeft(board) { (brd, idx) =>
-            if (!indexer.get(brd, idx).isKnown) {
-              indexer.set(brd, idx, mark)
-            } else {
-              brd
-            }
-          }
-          val counts = countSliceMarks(board, indexer)
-          if (counts._1 == indexer.limit / 2 && counts._1 != counts._2) {
-            fillAllMissing(ONE)
-          } else if (counts._2 == indexer.limit / 2 && counts._1 != counts._2) {
-            fillAllMissing(ZERO)
+          if (numZeroesLeft == 0 && numOnesLeft == 0) {
+            segments :+ segment
           } else {
-            board
+            if (zeroAllowed) {
+              val segs = allSegments(numZeroesLeft - 1, numOnesLeft, Some(ZERO), lastMark, segment :+ ZERO, segments)
+              if (oneAllowed) {
+                allSegments(numZeroesLeft, numOnesLeft - 1, Some(ONE), lastMark, segment :+ ONE, segs)
+              } else {
+                segs
+              }
+            } else if (oneAllowed) {
+              allSegments(numZeroesLeft, numOnesLeft - 1, Some(ONE), lastMark, segment :+ ONE, segments)
+            } else {
+              segments
+            }
           }
         }
 
-        def forAllRows(board: Board, f: (Board, Indexer) => Board): Board =
-          (0 until board.numRows).foldLeft(board) { (brd, rowIdx) =>
-            f(brd, board.rowIndexer(rowIdx))
+        allSegments(length / 2, length / 2, None, None, Vector[Mark](), Vector[Vector[Mark]]())
+      }
+
+      val allValidRows = allValidSegments(board.numColumns)
+      val allValidColumns = if (board.numColumns == board.numRows) allValidRows else allValidSegments(board.numRows)
+
+      @tailrec
+      def solvedWithCachedValidSegments(board: Board): Board = {
+        def solveOnce(baord: Board) = {
+          def extendDoubles(board: Board, indexer: Indexer): Board = {
+            (0 until (indexer.limit - 2)).foldLeft(board) { (brd, idx) =>
+              val pos1 = indexer.get(brd, idx)
+              val pos2 = indexer.get(brd, idx + 1)
+              val pos3 = indexer.get(brd, idx + 2)
+              if (pos1.isKnown && pos1 == pos2) {
+                // XX_ => XXY
+                indexer.set(brd, idx + 2, pos1.complement)
+              } else if (pos2.isKnown && pos2 == pos3) {
+                // _XX => YXX
+                indexer.set(brd, idx, pos2.complement)
+              } else if (pos1.isKnown && pos1 == pos3) {
+                // X_X => XYX
+                indexer.set(brd, idx + 1, pos1.complement)
+              } else {
+                brd
+              }
+            }
           }
 
-        def forAllColumns(board: Board, f: (Board, Indexer) => Board): Board =
-          (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
-            f(brd, board.columnIndexer(columnIdx))
+          def fillIfComplete(board: Board, indexer: Indexer): Board = {
+            def fillAllMissing(mark: Mark) = (0 until indexer.limit).foldLeft(board) { (brd, idx) =>
+              if (!indexer.get(brd, idx).isKnown) {
+                indexer.set(brd, idx, mark)
+              } else {
+                brd
+              }
+            }
+            val counts = indexer.summaryCount
+            if (counts.zeroCount == indexer.limit / 2 && counts.oneCount != counts.zeroCount) {
+              fillAllMissing(ONE)
+            } else if (counts.oneCount == indexer.limit / 2 && counts.oneCount != counts.zeroCount) {
+              fillAllMissing(ZERO)
+            } else {
+              board
+            }
           }
 
-        def forAllRowsAndColumns(board: Board, f: (Board, Indexer) => Board): Board =
-          forAllColumns(forAllRows(board, f), f)
+          def matchPossibilities(board: Board, indexer: Indexer, possibilities: MarkBundle): Board = {
+            type MaybeMarkSegment = IndexedSeq[Option[Mark]]
 
-        val (brd, _) = (for {
-          _ <- modify(forAllRowsAndColumns(_: Board, extendDoubles))
-          _ <- modify(forAllRowsAndColumns(_: Board, fillIfComplete))
-        } yield ()).run(board)
-        brd
+            def matches(segment: MarkSegment) = segment.toStream.zipWithIndex.forall(p => indexer.get(board, p._2).matches(p._1))
+
+            def project(projection: MaybeMarkSegment, projected: MarkSegment): MaybeMarkSegment = projection.zip(projected).map { c =>
+              c._1 match {
+                case None => Some(c._2)
+                case Some(m) => Some(m & c._2)
+              }
+            }
+
+            val base: MaybeMarkSegment = (0 until indexer.limit).map { idx =>
+              val mark = indexer.get(board, idx)
+              if (mark.isKnown) Some(mark) else None
+            }
+
+            val projected = possibilities.foldLeft(base) { case (projection, possibility) =>
+              if (matches(possibility)) {
+                project(projection, possibility)
+              } else {
+                projection
+              }
+            }
+
+            projected.zipWithIndex.foldLeft(board) { case (brd, (maybeMark, idx)) =>
+              indexer.set(brd, idx, maybeMark.get)
+            }
+          }
+
+          def forAllRows(board: Board, f: (Board, Indexer) => Board): Board =
+            (0 until board.numRows).foldLeft(board) { (brd, rowIdx) =>
+              f(brd, board.rowIndexer(rowIdx))
+            }
+
+          def forAllColumns(board: Board, f: (Board, Indexer) => Board): Board =
+            (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
+              f(brd, board.columnIndexer(columnIdx))
+            }
+
+          def forAllRowsAndColumns(board: Board, f: (Board, Indexer) => Board): Board =
+            forAllColumns(forAllRows(board, f), f)
+
+          val (modifiedBoard, _) = (for {
+          //          _ <- modify(forAllRowsAndColumns(_: Board, extendDoubles))
+          //          _ <- modify(forAllRowsAndColumns(_: Board, fillIfComplete))
+            _ <- modify(forAllRows(_: Board, matchPossibilities(_: Board, _: Indexer, allValidRows)))
+            _ <- modify(forAllColumns(_: Board, matchPossibilities(_: Board, _: Indexer, allValidColumns)))
+          } yield ()).run(board)
+          modifiedBoard
+        }
+
+        val solved = solveOnce(board)
+        if (board.version == solved.version) {
+          solved
+        } else {
+          solvedWithCachedValidSegments(solved)
+        }
       }
-      val solved = solveOnce(board)
-      if ( board.version == solved.version) {
-        solved
-      } else {
-        solve(solved)
-      }
+
+      solvedWithCachedValidSegments(board)
     }
   }
 
@@ -190,7 +256,14 @@ object X extends App {
   import BoardSolver.Board.solve
   import BoardSolver._
 
-  println(solve(Board("..1...|0...11|00..1.|..1..0|...1..|1...0.")))
+  println(solve(Board(".1....|0...11|00..1.|..1..0|...1..|1...0.")))
   println()
   println(solve(Board("11....|...0.0|......|...1..|..0..0|.0.00.")))
+  println()
+  println(solve(Board("1.......0...|..........1.")))
+  println()
+  println(solve(Board("00........|.0.......1|..00...0..|.0.0.0.0..|....00....|..1.....0.|...0...0.0|..1.1.....|...1..00.0|11......1.")))
+  println()
+  println(solve(Board("0010101101|.0.......1|..00...0..|00.0.0.0..|0...00....|1.1.....0.|...0.010.0|..1.1.....|...1..00.0|11....1.1.")))
+
 }
