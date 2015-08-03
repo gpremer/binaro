@@ -6,14 +6,18 @@ import scalaz._
 
 object BoardSolver {
 
-  sealed trait Indexer {
+  sealed trait SegmentIndexer {
     def get(board: Board, idx: Int): Mark
 
     def set(board: Board, idx: Int, mark: Mark): Board
 
-    def summaryCount: MarkCount
+    def summaryCount(board: Board): MarkCount
 
     def limit: Int
+  }
+
+  sealed trait SegmentBundleFetcher {
+    def fetch(board: Board): MarkBundle
   }
 
   case class MarkCount(zeroCount: Int, oneCount: Int) {
@@ -39,26 +43,6 @@ object BoardSolver {
     val numRows = rowCounts.size
     val numColumns = columnCounts.size
 
-    class RowIndexer(rowIdx: Int) extends Indexer {
-      override def get(board: Board, columnIdx: Int): Mark = board(rowIdx, columnIdx)
-
-      override def set(board: Board, columnIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
-
-      override def summaryCount = rowCounts(rowIdx)
-
-      val limit = numColumns
-    }
-
-    class ColumnIndexer(columnIdx: Int) extends Indexer {
-      override def get(board: Board, rowIdx: Int): Mark = board(rowIdx, columnIdx)
-
-      override def set(board: Board, rowIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
-
-      override def summaryCount = rowCounts(columnIdx)
-
-      val limit = numRows
-    }
-
     def apply(rowIdx: Int, columnIdx: Int) = rows(rowIdx)(columnIdx)
 
     def set(rowIdx: Int, columnIdx: Int, mark: Mark) =
@@ -73,14 +57,32 @@ object BoardSolver {
         this
       }
 
-    def rowIndexer(rowIdx: Int): Indexer = new RowIndexer(rowIdx) // could cache
+    def rowIndexer(rowIdx: Int): SegmentIndexer = new RowIndexer(rowIdx, numColumns) // could cache
 
-    def columnIndexer(columnIdx: Int): Indexer = new ColumnIndexer(columnIdx) // could cache
+    def columnIndexer(columnIdx: Int): SegmentIndexer = new ColumnIndexer(columnIdx, numRows) // could cache
 
     override def toString =
       (0 until numRows).map { rowIdx =>
         (0 until numColumns).map(this(rowIdx, _).toString).mkString
       }.mkString("\n")
+  }
+
+  class RowIndexer(rowIdx: Int, val limit: Int) extends SegmentIndexer {
+    override def get(board: Board, columnIdx: Int): Mark = board(rowIdx, columnIdx)
+
+    override def set(board: Board, columnIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
+
+    override def summaryCount(board: Board) = board.rowCounts(rowIdx)
+
+    //      val limit = numColumns
+  }
+
+  class ColumnIndexer(columnIdx: Int, val limit: Int) extends SegmentIndexer {
+    override def get(board: Board, rowIdx: Int): Mark = board(rowIdx, columnIdx)
+
+    override def set(board: Board, rowIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
+
+    override def summaryCount(board: Board) = board.rowCounts(columnIdx)
   }
 
   object Board {
@@ -147,7 +149,7 @@ object BoardSolver {
       @tailrec
       def solvedWithCachedValidSegments(board: Board): Board = {
         def solveOnce(baord: Board) = {
-          def extendDoubles(board: Board, indexer: Indexer): Board = {
+          def extendDoubles(board: Board, indexer: SegmentIndexer): Board = {
             (0 until (indexer.limit - 2)).foldLeft(board) { (brd, idx) =>
               val pos1 = indexer.get(brd, idx)
               val pos2 = indexer.get(brd, idx + 1)
@@ -167,7 +169,7 @@ object BoardSolver {
             }
           }
 
-          def fillIfComplete(board: Board, indexer: Indexer): Board = {
+          def fillIfComplete(board: Board, indexer: SegmentIndexer): Board = {
             def fillAllMissing(mark: Mark) = (0 until indexer.limit).foldLeft(board) { (brd, idx) =>
               if (!indexer.get(brd, idx).isKnown) {
                 indexer.set(brd, idx, mark)
@@ -175,7 +177,7 @@ object BoardSolver {
                 brd
               }
             }
-            val counts = indexer.summaryCount
+            val counts = indexer.summaryCount(board)
             if (counts.zeroCount == indexer.limit / 2 && counts.oneCount != counts.zeroCount) {
               fillAllMissing(ONE)
             } else if (counts.oneCount == indexer.limit / 2 && counts.oneCount != counts.zeroCount) {
@@ -185,7 +187,7 @@ object BoardSolver {
             }
           }
 
-          def matchPossibilities(board: Board, indexer: Indexer, possibilities: MarkBundle): Board = {
+          def matchPossibilities(board: Board, indexer: SegmentIndexer, possibilities: MarkBundle): Board = {
             type MaybeMarkSegment = IndexedSeq[Option[Mark]]
 
             def matches(segment: MarkSegment) = segment.toStream.zipWithIndex.forall(p => indexer.get(board, p._2).matches(p._1))
@@ -215,24 +217,24 @@ object BoardSolver {
             }
           }
 
-          def forAllRows(board: Board, f: (Board, Indexer) => Board): Board =
+          def forAllRows(board: Board, f: (Board, SegmentIndexer) => Board): Board =
             (0 until board.numRows).foldLeft(board) { (brd, rowIdx) =>
               f(brd, board.rowIndexer(rowIdx))
             }
 
-          def forAllColumns(board: Board, f: (Board, Indexer) => Board): Board =
+          def forAllColumns(board: Board, f: (Board, SegmentIndexer) => Board): Board =
             (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
               f(brd, board.columnIndexer(columnIdx))
             }
 
-          def forAllRowsAndColumns(board: Board, f: (Board, Indexer) => Board): Board =
+          def forAllRowsAndColumns(board: Board, f: (Board, SegmentIndexer) => Board): Board =
             forAllColumns(forAllRows(board, f), f)
 
           val (modifiedBoard, _) = (for {
           //          _ <- modify(forAllRowsAndColumns(_: Board, extendDoubles))
           //          _ <- modify(forAllRowsAndColumns(_: Board, fillIfComplete))
-            _ <- modify(forAllRows(_: Board, matchPossibilities(_: Board, _: Indexer, allValidRows)))
-            _ <- modify(forAllColumns(_: Board, matchPossibilities(_: Board, _: Indexer, allValidColumns)))
+            _ <- modify(forAllRows(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidRows)))
+            _ <- modify(forAllColumns(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidColumns)))
           } yield ()).run(board)
           modifiedBoard
         }
