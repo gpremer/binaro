@@ -16,10 +16,6 @@ object BoardSolver {
     def limit: Int
   }
 
-  sealed trait SegmentBundleFetcher {
-    def fetch(board: Board): MarkBundle
-  }
-
   case class MarkCount(zeroCount: Int, oneCount: Int) {
     def add(mark: Mark): MarkCount = mark match {
       case ZERO => copy(zeroCount = zeroCount + 1)
@@ -32,8 +28,8 @@ object BoardSolver {
   type MarkBundle = IndexedSeq[MarkSegment]
   type SegmentSummary = IndexedSeq[MarkCount]
 
-  class Board(rows: MarkBundle,
-              columns: MarkBundle,
+  class Board(val rows: MarkBundle,
+              val columns: MarkBundle,
               val rowCounts: SegmentSummary,
               val columnCounts: SegmentSummary,
               val version: Int = 0) {
@@ -73,8 +69,6 @@ object BoardSolver {
     override def set(board: Board, columnIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
 
     override def summaryCount(board: Board) = board.rowCounts(rowIdx)
-
-    //      val limit = numColumns
   }
 
   class ColumnIndexer(columnIdx: Int, val limit: Int) extends SegmentIndexer {
@@ -187,7 +181,7 @@ object BoardSolver {
             }
           }
 
-          def matchPossibilities(board: Board, indexer: SegmentIndexer, possibilities: MarkBundle): Board = {
+          def matchPossibilities(board: Board, indexer: SegmentIndexer, possibilities: MarkBundle, forbidden: MarkBundle): Board = {
             type MaybeMarkSegment = IndexedSeq[Option[Mark]]
 
             def matches(segment: MarkSegment) = segment.toStream.zipWithIndex.forall(p => indexer.get(board, p._2).matches(p._1))
@@ -204,7 +198,7 @@ object BoardSolver {
               if (mark.isKnown) Some(mark) else None
             }
 
-            val projected = possibilities.foldLeft(base) { case (projection, possibility) =>
+            val projected = possibilities.filterNot(forbidden.contains).foldLeft(base) { case (projection, possibility) =>
               if (matches(possibility)) {
                 project(projection, possibility)
               } else {
@@ -222,9 +216,19 @@ object BoardSolver {
               f(brd, board.rowIndexer(rowIdx))
             }
 
+          def forAllRows2(board: Board, f: (Board, SegmentIndexer, MarkBundle) => Board): Board =
+            (0 until board.numRows).foldLeft(board) { (brd, rowIdx) =>
+              f(brd, board.rowIndexer(rowIdx), board.rows)
+            }
+
           def forAllColumns(board: Board, f: (Board, SegmentIndexer) => Board): Board =
             (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
               f(brd, board.columnIndexer(columnIdx))
+            }
+
+          def forAllColumns2(board: Board, f: (Board, SegmentIndexer, MarkBundle) => Board): Board =
+            (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
+              f(brd, board.columnIndexer(columnIdx), board.columns)
             }
 
           def forAllRowsAndColumns(board: Board, f: (Board, SegmentIndexer) => Board): Board =
@@ -233,8 +237,8 @@ object BoardSolver {
           val (modifiedBoard, _) = (for {
           //          _ <- modify(forAllRowsAndColumns(_: Board, extendDoubles))
           //          _ <- modify(forAllRowsAndColumns(_: Board, fillIfComplete))
-            _ <- modify(forAllRows(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidRows)))
-            _ <- modify(forAllColumns(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidColumns)))
+            _ <- modify(forAllRows2(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidRows, _: MarkBundle)))
+            _ <- modify(forAllColumns2(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidColumns, _: MarkBundle)))
           } yield ()).run(board)
           modifiedBoard
         }
