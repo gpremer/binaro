@@ -1,12 +1,10 @@
 package net.premereur.binaro
 
 import scala.annotation.tailrec
-import scalaz.Scalaz._
-import scalaz._
 
 object BoardSolver {
 
-  sealed trait SegmentIndexer {
+  sealed trait SegmentView {
     def get(board: Board, idx: Int): Mark
 
     def set(board: Board, idx: Int, mark: Mark): Board
@@ -14,6 +12,8 @@ object BoardSolver {
     def summaryCount(board: Board): MarkCount
 
     def limit: Int
+
+    def isComplete(board: Board): Boolean = summaryCount(board) == MarkCount(limit / 2, limit / 2)
   }
 
   case class MarkCount(zeroCount: Int, oneCount: Int) {
@@ -26,7 +26,6 @@ object BoardSolver {
 
   type MarkSegment = IndexedSeq[Mark]
   type Segments = IndexedSeq[Segment]
-  //type SegmentsBundle = IndexedSeq[Segments]
 
   case class Segment(marks: MarkSegment, count: MarkCount) {
 
@@ -53,8 +52,7 @@ object BoardSolver {
   }
 
   class Board(val rows: Segments,
-              val columns: Segments,
-              val version: Int = 0) {
+              val columns: Segments) {
 
     import Board._
 
@@ -73,15 +71,16 @@ object BoardSolver {
       if (mark != UNKNOWN && this(rowIdx, columnIdx) == UNKNOWN) {
         new Board(
           update(rows, rowIdx, (_: Segment).set(columnIdx, mark)),
-          update(columns, columnIdx, (_: Segment).set(rowIdx, mark)),
-          version + 1)
+          update(columns, columnIdx, (_: Segment).set(rowIdx, mark)))
       } else {
         this
       }
 
-    def rowIndexer(rowIdx: Int): SegmentIndexer = new RowIndexer(rowIdx, numColumns) // could cache
+    def rowView(rowIdx: Int): SegmentView = new RowView(rowIdx, numColumns) // could cache
 
-    def columnIndexer(columnIdx: Int): SegmentIndexer = new ColumnIndexer(columnIdx, numRows) // could cache
+    def columnView(columnIdx: Int): SegmentView = new ColumnView(columnIdx, numRows) // could cache
+
+    def isComplete = (0 until numRows).map(rowView).forall(_.isComplete(this))
 
     override def toString =
       (0 until numRows).map { rowIdx =>
@@ -89,20 +88,21 @@ object BoardSolver {
       }.mkString("\n")
   }
 
-  class RowIndexer(rowIdx: Int, val limit: Int) extends SegmentIndexer {
+  class RowView(rowIdx: Int, val limit: Int) extends SegmentView {
     override def get(board: Board, columnIdx: Int): Mark = board(rowIdx, columnIdx)
 
     override def set(board: Board, columnIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
 
     override def summaryCount(board: Board) = board.rowCounts(rowIdx)
+
   }
 
-  class ColumnIndexer(columnIdx: Int, val limit: Int) extends SegmentIndexer {
+  class ColumnView(columnIdx: Int, val limit: Int) extends SegmentView {
     override def get(board: Board, rowIdx: Int): Mark = board(rowIdx, columnIdx)
 
     override def set(board: Board, rowIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
 
-    override def summaryCount(board: Board) = board.rowCounts(columnIdx)
+    override def summaryCount(board: Board) = board.columnCounts(columnIdx)
   }
 
   object Board {
@@ -142,7 +142,7 @@ object BoardSolver {
           def oneAllowed = numOnesLeft > 0 && (nextToLastMark.getOrElse(ZERO) != ONE || lastMark.getOrElse(ZERO) != ONE)
 
           if (numZeroesLeft == 0 && numOnesLeft == 0) {
-            segments :+ Segment(marks, MarkCount(length/2,length/2))
+            segments :+ Segment(marks, MarkCount(length / 2, length / 2))
           } else {
             if (zeroAllowed) {
               val segs = allSegments(numZeroesLeft - 1, numOnesLeft, Some(ZERO), lastMark, marks :+ ZERO, segments)
@@ -167,11 +167,11 @@ object BoardSolver {
 
       @tailrec
       def solvedWithCachedValidSegments(board: Board): Board = {
-        def solveOnce(baord: Board) = {
-          def matchPossibilities(board: Board, indexer: SegmentIndexer, possibilities: Segments, forbidden: Segments): Board = {
+        def solveOnce(board: Board) = {
+          def matchPossibilities(board: Board, view: SegmentView, possibilities: Segments, forbidden: Segments): Board = {
             type MaybeMarkSegment = IndexedSeq[Option[Mark]]
 
-            def matches(segment: Segment) = segment.marks.toStream.zipWithIndex.forall(p => indexer.get(board, p._2).matches(p._1))
+            def matches(segment: Segment) = segment.marks.toStream.zipWithIndex.forall(p => view.get(board, p._2).matches(p._1))
 
             def project(projection: MaybeMarkSegment, projected: Segment): MaybeMarkSegment =
               projection.zip(projected.marks).map { c =>
@@ -181,43 +181,51 @@ object BoardSolver {
                 }
               }
 
-            val base: MaybeMarkSegment = (0 until indexer.limit).map { idx =>
-              val mark = indexer.get(board, idx)
-              if (mark.isKnown) Some(mark) else None
-            }
+            def fillCertainMarks: Board = {
+              val base: MaybeMarkSegment = (0 until view.limit).map { idx =>
+                val mark = view.get(board, idx)
+                if (mark.isKnown) Some(mark) else None
+              }
 
-            val projected = possibilities.filterNot(forbidden.contains).foldLeft(base) { case (projection, possibility) =>
-              if (matches(possibility)) {
-                project(projection, possibility)
-              } else {
-                projection
+              val projected = possibilities.filterNot(forbidden.contains).foldLeft(base) { case (projection, possibility) =>
+                if (matches(possibility)) {
+                  project(projection, possibility)
+                } else {
+                  projection
+                }
+              }
+
+              projected.zipWithIndex.foldLeft(board) { case (brd, (maybeMark, idx)) =>
+                view.set(brd, idx, maybeMark.get)
               }
             }
 
-            projected.zipWithIndex.foldLeft(board) { case (brd, (maybeMark, idx)) =>
-              indexer.set(brd, idx, maybeMark.get)
+            // Optimisation: if the segment is fully populated, we surely can't change the segment
+            if (view.isComplete(board)) {
+              board
+            } else {
+              fillCertainMarks
             }
           }
 
-          def forAllRows2(board: Board, f: (Board, SegmentIndexer, Segments) => Board): Board =
+          def forAllRows(board: Board, f: (Board, SegmentView, Segments) => Board): Board =
             (0 until board.numRows).foldLeft(board) { (brd, rowIdx) =>
-              f(brd, board.rowIndexer(rowIdx), board.rows)
+              f(brd, brd.rowView(rowIdx), brd.rows)
             }
 
-          def forAllColumns2(board: Board, f: (Board, SegmentIndexer, Segments) => Board): Board =
-            (0 until board.numRows).foldLeft(board) { (brd, columnIdx) =>
-              f(brd, board.columnIndexer(columnIdx), board.columns)
+          def forAllColumns(board: Board, f: (Board, SegmentView, Segments) => Board): Board =
+            (0 until board.numColumns).foldLeft(board) { (brd, columnIdx) =>
+              f(brd, brd.columnView(columnIdx), brd.columns)
             }
 
-          val (modifiedBoard, _) = (for {
-            _ <- modify(forAllRows2(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidRows, _: Segments)))
-            _ <- modify(forAllColumns2(_: Board, matchPossibilities(_: Board, _: SegmentIndexer, allValidColumns, _: Segments)))
-          } yield ()).run(board)
-          modifiedBoard
+          def forAllRowsAndColumns(board: Board, f: (Board, SegmentView, Segments) => Board): Board =
+            forAllRows(forAllColumns(board, f), f)
+
+          forAllRowsAndColumns(board, matchPossibilities(_, _, allValidColumns, _))
         }
 
         val solved = solveOnce(board)
-        if (board.version == solved.version) {
+        if (solved.isComplete) {
           solved
         } else {
           solvedWithCachedValidSegments(solved)
@@ -230,7 +238,7 @@ object BoardSolver {
 
 }
 
-object X extends App {
+object SudokuSolver extends App {
 
   import BoardSolver.Board.solve
   import BoardSolver._
@@ -239,8 +247,8 @@ object X extends App {
   println()
   println(solve(Board("11....|...0.0|......|...1..|..0..0|.0.00.")))
   println()
-  println(solve(Board("1.......0...|..........1.")))
-  println()
+  //  println(solve(Board("1.......0...|..........1.")))
+  //  println()
   println(solve(Board("00........|.0.......1|..00...0..|.0.0.0.0..|....00....|..1.....0.|...0...0.0|..1.1.....|...1..00.0|11......1.")))
   println()
   println(solve(Board("0010101101|.0.......1|..00...0..|00.0.0.0..|0...00....|1.1.....0.|...0.010.0|..1.1.....|...1..00.0|11....1.1.")))
