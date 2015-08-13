@@ -4,8 +4,6 @@ sealed trait Mark {
 
   def isKnown: Boolean
 
-  def complement: Mark
-
   def matches(mark: Mark): Boolean
 
 }
@@ -13,8 +11,6 @@ sealed trait Mark {
 case object ONE extends Mark {
 
   override def isKnown = true
-
-  override def complement: Mark = ZERO
 
   override def matches(mark: Mark): Boolean = mark == this || mark == UNKNOWN
 
@@ -25,8 +21,6 @@ case object ZERO extends Mark {
 
   override def isKnown: Boolean = true
 
-  override def complement: Mark = ONE
-
   override def matches(mark: Mark): Boolean = mark == this || mark == UNKNOWN
 
   override def toString: String = "0"
@@ -35,8 +29,6 @@ case object ZERO extends Mark {
 case object UNKNOWN extends Mark {
 
   override def isKnown: Boolean = false
-
-  override def complement: Mark = this
 
   override def matches(mark: Mark): Boolean = true
 
