@@ -1,36 +1,29 @@
 package net.premereur.binaro
 
-sealed trait Mark {
+sealed trait DefinedMark {
+  def isKnown = true
 
-  def isKnown: Boolean
-
-  def matches(mark: Mark): Boolean
-
+  def matches(mark: DefinedMark): Boolean = mark == this
 }
 
-case object ONE extends Mark {
+sealed trait Mark {
+  def isKnown: Boolean
 
-  override def isKnown = true
+  def matches(mark: DefinedMark): Boolean
+}
 
-  override def matches(mark: Mark): Boolean = mark == this || mark == UNKNOWN
-
+case object ONE extends Mark with DefinedMark {
   override def toString: String = "1"
 }
 
-case object ZERO extends Mark {
-
-  override def isKnown: Boolean = true
-
-  override def matches(mark: Mark): Boolean = mark == this || mark == UNKNOWN
-
+case object ZERO extends Mark with DefinedMark {
   override def toString: String = "0"
 }
 
 case object UNKNOWN extends Mark {
-
   override def isKnown: Boolean = false
 
-  override def matches(mark: Mark): Boolean = true
+  override def matches(mark: DefinedMark): Boolean = true
 
   override def toString: String = "_"
 }

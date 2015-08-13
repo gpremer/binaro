@@ -14,6 +14,8 @@ object BoardSolver {
     def limit: Int
 
     def isComplete(board: Board): Boolean = summaryCount(board) == MarkCount(limit / 2, limit / 2)
+
+    def marks(baord: Board): MarkSegment
   }
 
   case class MarkCount(zeroCount: Int, oneCount: Int) {
@@ -26,6 +28,8 @@ object BoardSolver {
 
   type MarkSegment = IndexedSeq[Mark]
   type Segments = IndexedSeq[Segment]
+  type DefinedMarkSegment = IndexedSeq[DefinedMark]
+  type DefinedMarkSegments = IndexedSeq[DefinedMarkSegment]
 
   case class Segment(marks: MarkSegment, count: MarkCount) {
 
@@ -45,6 +49,8 @@ object BoardSolver {
       }
 
     def size = marks.size
+
+    lazy val isComplete = count.oneCount == marks.size / 2 && count.zeroCount == count.oneCount
   }
 
   object Segment {
@@ -97,6 +103,7 @@ object BoardSolver {
 
     override def summaryCount(board: Board) = board.rowCounts(rowIdx)
 
+    override def marks(board: Board): MarkSegment = board.rows(rowIdx).marks
   }
 
   class ColumnView(columnIdx: Int, val limit: Int) extends SegmentView {
@@ -105,6 +112,8 @@ object BoardSolver {
     override def set(board: Board, rowIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
 
     override def summaryCount(board: Board) = board.columnCounts(columnIdx)
+
+    override def marks(board: Board): MarkSegment = board.columns(columnIdx).marks
   }
 
   object Board {
@@ -134,17 +143,17 @@ object BoardSolver {
     def update[A](seq: IndexedSeq[A], idx: Int, f: A => A) = seq.updated(idx, f(seq(idx)))
 
     def solve(board: Board): Option[Board] = {
-      def allValidSegments(length: Int): Segments = {
+      def allValidSegments(length: Int): DefinedMarkSegments = {
 
         def allSegments(numZeroesLeft: Int, numOnesLeft: Int,
-                        lastMark: Option[Mark], nextToLastMark: Option[Mark],
-                        marks: MarkSegment,
-                        segments: Segments): Segments = {
+                        lastMark: Option[DefinedMark], nextToLastMark: Option[DefinedMark],
+                        marks: DefinedMarkSegment,
+                        segments: DefinedMarkSegments): DefinedMarkSegments = {
           def zeroAllowed = numZeroesLeft > 0 && (nextToLastMark.getOrElse(ONE) != ZERO || lastMark.getOrElse(ONE) != ZERO)
           def oneAllowed = numOnesLeft > 0 && (nextToLastMark.getOrElse(ZERO) != ONE || lastMark.getOrElse(ZERO) != ONE)
 
           if (numZeroesLeft == 0 && numOnesLeft == 0) {
-            segments :+ Segment(marks, MarkCount(length / 2, length / 2))
+            segments :+ marks
           } else {
             if (zeroAllowed) {
               val segs = allSegments(numZeroesLeft - 1, numOnesLeft, Some(ZERO), lastMark, marks :+ ZERO, segments)
@@ -161,7 +170,7 @@ object BoardSolver {
           }
         }
 
-        allSegments(length / 2, length / 2, None, None, Vector[Mark](), Vector[Segment]())
+        allSegments(length / 2, length / 2, None, None, Vector[DefinedMark](), Vector[DefinedMarkSegment]())
       }
 
       val allValidRows = allValidSegments(board.numColumns)
@@ -170,21 +179,26 @@ object BoardSolver {
       @tailrec
       def solvedWithCachedValidSegments(board: Board): Option[Board] = {
         def solveOnce(board: Board) = {
-          def matchPossibilities(board: Board, view: SegmentView, possibilities: Segments, forbidden: Segments): Board = {
-            type MaybeMarkSegment = IndexedSeq[ProjectionMark]
+          def matchPossibilities(board: Board, view: SegmentView, possibilities: DefinedMarkSegments, currentSegments: Segments): Board = {
+            type MaybeMarkSegment = IndexedSeq[MarkProjection]
 
-            def currentSegmentMatches(segment: Segment) = segment.marks.toStream.zipWithIndex.forall(p => view.get(board, p._2).matches(p._1))
+            def currentSegmentMatches(segment: DefinedMarkSegment) = segment.toStream.zip(view.marks(board)).forall(p => p._2.matches(p._1))
 
-            def project(projection: MaybeMarkSegment, projected: Segment): MaybeMarkSegment =
-              projection.zip(projected.marks).map { c =>
+            def project(projection: MaybeMarkSegment, projected: DefinedMarkSegment): MaybeMarkSegment =
+              projection.zip(projected).map { c =>
                 c._1.project(c._2)
               }
 
             def fillCertainMarks: Board = {
-              val base: MaybeMarkSegment = (0 until view.limit).map(idx => ProjectionMark(view.get(board, idx)))
+              val base: MaybeMarkSegment = (0 until view.limit).map(idx => MarkProjection(view.get(board, idx)))
 
-              val projected = possibilities.filterNot(forbidden.contains).foldLeft(base) { case (projection, possibility) =>
-                if (currentSegmentMatches(possibility)) {
+              val completedSegments = currentSegments.filter(_.isComplete)
+
+              def isInCompletedSegements(possibility: DefinedMarkSegment) = completedSegments.exists(segment =>
+                segment.marks.toStream.zip(possibility).forall(p => p._1 == p._2))
+
+              val projected = possibilities.foldLeft(base) { case (projection, possibility) =>
+                if (!isInCompletedSegements(possibility) && currentSegmentMatches(possibility)) {
                   project(projection, possibility)
                 } else {
                   projection
@@ -192,7 +206,7 @@ object BoardSolver {
               }
 
               projected.zipWithIndex.foldLeft(board) { case (brd, (projectionMark, idx)) =>
-                view.set(brd, idx, projectionMark.get)
+                view.set(brd, idx, projectionMark.get) // TODO make this one operation on Board instead of size ones: O(n) -> O(1) regarding Board creations
               }
             }
 
