@@ -8,7 +8,6 @@ sealed trait Mark {
 
   def matches(mark: Mark): Boolean
 
-  def &(mark: Mark): Mark = if (this == mark) this else UNKNOWN
 }
 
 case object ONE extends Mark {

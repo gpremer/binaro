@@ -35,7 +35,7 @@ object BoardSolver {
 
     def set(idx: Int, mark: Mark) =
     // once set, a mark cannot be reset
-      if (mark != UNKNOWN && this(idx) == UNKNOWN) {
+      if (mark != UNKNOWN && this (idx) == UNKNOWN) {
         copy(
           marks = update(marks, idx, { _: Mark => mark }),
           count = count.add(mark)
@@ -52,7 +52,8 @@ object BoardSolver {
   }
 
   class Board(val rows: Segments,
-              val columns: Segments) {
+              val columns: Segments,
+              val version: Int = 0) {
 
     import Board._
 
@@ -68,10 +69,11 @@ object BoardSolver {
 
     def set(rowIdx: Int, columnIdx: Int, mark: Mark) =
     // once set, we cannot reset
-      if (mark != UNKNOWN && this(rowIdx, columnIdx) == UNKNOWN) {
+      if (mark != UNKNOWN && this (rowIdx, columnIdx) == UNKNOWN) {
         new Board(
           update(rows, rowIdx, (_: Segment).set(columnIdx, mark)),
-          update(columns, columnIdx, (_: Segment).set(rowIdx, mark)))
+          update(columns, columnIdx, (_: Segment).set(rowIdx, mark)),
+          version + 1)
       } else {
         this
       }
@@ -84,7 +86,7 @@ object BoardSolver {
 
     override def toString =
       (0 until numRows).map { rowIdx =>
-        (0 until numColumns).map(this(rowIdx, _).toString).mkString
+        (0 until numColumns).map(this (rowIdx, _).toString).mkString
       }.mkString("\n")
   }
 
@@ -131,7 +133,7 @@ object BoardSolver {
 
     def update[A](seq: IndexedSeq[A], idx: Int, f: A => A) = seq.updated(idx, f(seq(idx)))
 
-    def solve(board: Board): Board = {
+    def solve(board: Board): Option[Board] = {
       def allValidSegments(length: Int): Segments = {
 
         def allSegments(numZeroesLeft: Int, numOnesLeft: Int,
@@ -166,37 +168,31 @@ object BoardSolver {
       val allValidColumns = if (board.numColumns == board.numRows) allValidRows else allValidSegments(board.numRows)
 
       @tailrec
-      def solvedWithCachedValidSegments(board: Board): Board = {
+      def solvedWithCachedValidSegments(board: Board): Option[Board] = {
         def solveOnce(board: Board) = {
           def matchPossibilities(board: Board, view: SegmentView, possibilities: Segments, forbidden: Segments): Board = {
-            type MaybeMarkSegment = IndexedSeq[Option[Mark]]
+            type MaybeMarkSegment = IndexedSeq[ProjectionMark]
 
-            def matches(segment: Segment) = segment.marks.toStream.zipWithIndex.forall(p => view.get(board, p._2).matches(p._1))
+            def currentSegmentMatches(segment: Segment) = segment.marks.toStream.zipWithIndex.forall(p => view.get(board, p._2).matches(p._1))
 
             def project(projection: MaybeMarkSegment, projected: Segment): MaybeMarkSegment =
               projection.zip(projected.marks).map { c =>
-                c._1 match {
-                  case None => Some(c._2)
-                  case Some(m) => Some(m & c._2)
-                }
+                c._1.project(c._2)
               }
 
             def fillCertainMarks: Board = {
-              val base: MaybeMarkSegment = (0 until view.limit).map { idx =>
-                val mark = view.get(board, idx)
-                if (mark.isKnown) Some(mark) else None
-              }
+              val base: MaybeMarkSegment = (0 until view.limit).map(idx => ProjectionMark(view.get(board, idx)))
 
               val projected = possibilities.filterNot(forbidden.contains).foldLeft(base) { case (projection, possibility) =>
-                if (matches(possibility)) {
+                if (currentSegmentMatches(possibility)) {
                   project(projection, possibility)
                 } else {
                   projection
                 }
               }
 
-              projected.zipWithIndex.foldLeft(board) { case (brd, (maybeMark, idx)) =>
-                view.set(brd, idx, maybeMark.get)
+              projected.zipWithIndex.foldLeft(board) { case (brd, (projectionMark, idx)) =>
+                view.set(brd, idx, projectionMark.get)
               }
             }
 
@@ -226,9 +222,11 @@ object BoardSolver {
 
         val solved = solveOnce(board)
         if (solved.isComplete) {
-          solved
-        } else {
+          Some(solved)
+        } else if (solved.version != board.version) {
           solvedWithCachedValidSegments(solved)
+        } else {
+          None
         }
       }
 
@@ -247,8 +245,8 @@ object SudokuSolver extends App {
   println()
   println(solve(Board("11....|...0.0|......|...1..|..0..0|.0.00.")))
   println()
-  //  println(solve(Board("1.......0...|..........1.")))
-  //  println()
+  println(solve(Board("111...|...0.0|......|...1..|..0..0|.0.00.")))
+  println()
   println(solve(Board("00........|.0.......1|..00...0..|.0.0.0.0..|....00....|..1.....0.|...0...0.0|..1.1.....|...1..00.0|11......1.")))
   println()
   println(solve(Board("0010101101|.0.......1|..00...0..|00.0.0.0..|0...00....|1.1.....0.|...0.010.0|..1.1.....|...1..00.0|11....1.1.")))
