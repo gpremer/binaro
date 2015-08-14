@@ -5,7 +5,7 @@ import scala.annotation.tailrec
 object BoardSolver {
 
   sealed trait SegmentView {
-    def get(board: Board, idx: Int): Mark
+    def map[T](board: Board, f: (Mark) => T): IndexedSeq[T]
 
     def set(board: Board, idx: Int, mark: Mark): Board
 
@@ -97,7 +97,7 @@ object BoardSolver {
   }
 
   class RowView(rowIdx: Int, val limit: Int) extends SegmentView {
-    override def get(board: Board, columnIdx: Int): Mark = board(rowIdx, columnIdx)
+    override def map[T](board: Board, f: (Mark) => T): IndexedSeq[T] = board.rows(rowIdx).marks.map(f)
 
     override def set(board: Board, columnIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
 
@@ -107,7 +107,7 @@ object BoardSolver {
   }
 
   class ColumnView(columnIdx: Int, val limit: Int) extends SegmentView {
-    override def get(board: Board, rowIdx: Int): Mark = board(rowIdx, columnIdx)
+    override def map[T](board: Board, f: (Mark) => T): IndexedSeq[T] = board.columns(columnIdx).marks.map(f)
 
     override def set(board: Board, rowIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
 
@@ -190,7 +190,7 @@ object BoardSolver {
               }
 
             def fillCertainMarks: Board = {
-              val base: MaybeMarkSegment = (0 until view.limit).map(idx => MarkProjection(view.get(board, idx)))
+              val base: MaybeMarkSegment = view.map[MarkProjection](board, MarkProjection(_))
 
               val completedSegments = currentSegments.filter(_.isComplete)
 
