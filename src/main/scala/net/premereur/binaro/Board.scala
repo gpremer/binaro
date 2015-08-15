@@ -5,7 +5,7 @@ import scala.annotation.tailrec
 object BoardSolver {
 
   sealed trait SegmentView {
-    def map[T](f: (Mark) => T): IndexedSeq[T]
+    def map[T](f: Mark => T): IndexedSeq[T]
 
     def update(f: Int => Mark): Board
 
@@ -91,9 +91,9 @@ object BoardSolver {
     def isComplete = (0 until numRows).map(rowView).forall(_.isComplete(this))
 
     class RowView(rowIdx: Int) extends SegmentView {
-      override def map[T](f: (Mark) => T): IndexedSeq[T] = rows(rowIdx).marks.map(f)
+      override def map[T](f: Mark => T): IndexedSeq[T] = rows(rowIdx).marks.map(f)
 
-      override def update(f: (Int) => Mark): Board = (0 until limit).foldLeft(Board.this) { (b, idx) =>
+      override def update(f: Int => Mark): Board = (0 until limit).foldLeft(Board.this) { (b, idx) =>
         b.set(rowIdx, idx, f(idx))
       }
 
@@ -105,9 +105,9 @@ object BoardSolver {
     }
 
     class ColumnView(columnIdx: Int) extends SegmentView {
-      override def map[T](f: (Mark) => T): IndexedSeq[T] = columns(columnIdx).marks.map(f)
+      override def map[T](f: Mark => T): IndexedSeq[T] = columns(columnIdx).marks.map(f)
 
-      override def update(f: (Int) => Mark): Board = (0 until limit).foldLeft(Board.this) { (b, idx) =>
+      override def update(f: Int => Mark): Board = (0 until limit).foldLeft(Board.this) { (b, idx) =>
         b.set(idx, columnIdx, f(idx))
       }
 
@@ -188,17 +188,17 @@ object BoardSolver {
       def solvedWithCachedValidSegments(board: Board): Option[Board] = {
         def solveOnce(board: Board) = {
           def matchPossibilities(board: Board, view: SegmentView, possibilities: DefinedMarkSegments, currentSegments: Segments): Board = {
-            type MaybeMarkSegment = IndexedSeq[MarkProjection]
+            type ProjectionMarkSegment = IndexedSeq[MarkProjection]
 
             def currentSegmentMatches(segment: DefinedMarkSegment) = segment.toStream.zip(view.marks(board)).forall(p => p._2.matches(p._1))
 
-            def project(projection: MaybeMarkSegment, projected: DefinedMarkSegment): MaybeMarkSegment =
+            def project(projection: ProjectionMarkSegment, projected: DefinedMarkSegment): ProjectionMarkSegment =
               projection.zip(projected).map { c =>
                 c._1.project(c._2)
               }
 
             def fillCertainMarks: Board = {
-              val base: MaybeMarkSegment = view.map[MarkProjection](MarkProjection(_))
+              val base: ProjectionMarkSegment = view.map[MarkProjection](MarkProjection(_))
 
               val completedSegments = currentSegments.filter(_.isComplete)
 
