@@ -4,7 +4,7 @@ package net.premereur.binaro
  * Defines a position in a projection. It may either be in its initial unprojected state, hold a defined mark or be undecided.
  */
 sealed trait MarkProjection {
-  def get: Mark
+  def asMark: Mark
 
   def project(mark: DefinedMark): MarkProjection
 }
@@ -23,7 +23,7 @@ case object INITIAL extends MarkProjection {
     case ONE => ONE_PROJECTION
   }
 
-  override def get: Mark = UNKNOWN // Does not happen for well-formed puzzles, but might for invalid ones
+  override def asMark: Mark = UNKNOWN // Does not happen for well-formed puzzles, but might for invalid ones
 }
 
 case object ZERO_PROJECTION extends MarkProjection {
@@ -32,7 +32,7 @@ case object ZERO_PROJECTION extends MarkProjection {
     case ONE => UNDECIDED_PROJECTION
   }
 
-  override def get: Mark = ZERO
+  override def asMark: Mark = ZERO
 }
 
 case object ONE_PROJECTION extends MarkProjection {
@@ -41,11 +41,11 @@ case object ONE_PROJECTION extends MarkProjection {
     case ONE => ONE_PROJECTION
   }
 
-  override def get: Mark = ONE
+  override def asMark: Mark = ONE
 }
 
 case object UNDECIDED_PROJECTION extends MarkProjection {
   override def project(mark: DefinedMark) = UNDECIDED_PROJECTION
 
-  override def get: Mark = UNKNOWN
+  override def asMark: Mark = UNKNOWN
 }

@@ -7,7 +7,7 @@ object BoardSolver {
   sealed trait SegmentView {
     def map[T](board: Board, f: (Mark) => T): IndexedSeq[T]
 
-    def set(board: Board, idx: Int, mark: Mark): Board
+    def update(board: Board, f: Int => Mark): Board
 
     def summaryCount(board: Board): MarkCount
 
@@ -15,7 +15,7 @@ object BoardSolver {
 
     def isComplete(board: Board): Boolean = summaryCount(board) == MarkCount(limit / 2, limit / 2)
 
-    def marks(baord: Board): MarkSegment
+    def marks(board: Board): MarkSegment
   }
 
   case class MarkCount(zeroCount: Int, oneCount: Int) {
@@ -99,7 +99,9 @@ object BoardSolver {
   class RowView(rowIdx: Int, val limit: Int) extends SegmentView {
     override def map[T](board: Board, f: (Mark) => T): IndexedSeq[T] = board.rows(rowIdx).marks.map(f)
 
-    override def set(board: Board, columnIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
+    override def update(board: Board, f: (Int) => Mark): Board = (0 until limit).foldLeft(board) { (b, idx) =>
+      b.set(rowIdx, idx, f(idx))
+    }
 
     override def summaryCount(board: Board) = board.rowCounts(rowIdx)
 
@@ -109,7 +111,9 @@ object BoardSolver {
   class ColumnView(columnIdx: Int, val limit: Int) extends SegmentView {
     override def map[T](board: Board, f: (Mark) => T): IndexedSeq[T] = board.columns(columnIdx).marks.map(f)
 
-    override def set(board: Board, rowIdx: Int, mark: Mark): Board = board.set(rowIdx, columnIdx, mark)
+    override def update(board: Board, f: (Int) => Mark): Board = (0 until limit).foldLeft(board) { (b, idx) =>
+      b.set(idx, columnIdx, f(idx))
+    }
 
     override def summaryCount(board: Board) = board.columnCounts(columnIdx)
 
@@ -205,9 +209,8 @@ object BoardSolver {
                 }
               }
 
-              projected.zipWithIndex.foldLeft(board) { case (brd, (projectionMark, idx)) =>
-                view.set(brd, idx, projectionMark.get) // TODO make this one operation on Board instead of size ones: O(n) -> O(1) regarding Board creations
-              }
+              val update1 = view.update(board, projected(_).asMark)
+              update1
             }
 
             // Optimisation: if the segment is fully populated, we surely can't change the segment
