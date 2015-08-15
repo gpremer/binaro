@@ -5,9 +5,9 @@ import scala.annotation.tailrec
 object BoardSolver {
 
   sealed trait SegmentView {
-    def map[T](board: Board, f: (Mark) => T): IndexedSeq[T]
+    def map[T](f: (Mark) => T): IndexedSeq[T]
 
-    def update(board: Board, f: Int => Mark): Board
+    def update(f: Int => Mark): Board
 
     def summaryCount(board: Board): MarkCount
 
@@ -84,40 +84,44 @@ object BoardSolver {
         this
       }
 
-    def rowView(rowIdx: Int): SegmentView = new RowView(rowIdx, numColumns) // could cache
+    def rowView(rowIdx: Int): SegmentView = new RowView(rowIdx) // could cache
 
-    def columnView(columnIdx: Int): SegmentView = new ColumnView(columnIdx, numRows) // could cache
+    def columnView(columnIdx: Int): SegmentView = new ColumnView(columnIdx) // could cache
 
     def isComplete = (0 until numRows).map(rowView).forall(_.isComplete(this))
+
+    class RowView(rowIdx: Int) extends SegmentView {
+      override def map[T](f: (Mark) => T): IndexedSeq[T] = rows(rowIdx).marks.map(f)
+
+      override def update(f: (Int) => Mark): Board = (0 until limit).foldLeft(Board.this) { (b, idx) =>
+        b.set(rowIdx, idx, f(idx))
+      }
+
+      override def summaryCount(board: Board) = board.rowCounts(rowIdx)
+
+      override def marks(board: Board): MarkSegment = board.rows(rowIdx).marks
+
+      override def limit: Int = numColumns
+    }
+
+    class ColumnView(columnIdx: Int) extends SegmentView {
+      override def map[T](f: (Mark) => T): IndexedSeq[T] = columns(columnIdx).marks.map(f)
+
+      override def update(f: (Int) => Mark): Board = (0 until limit).foldLeft(Board.this) { (b, idx) =>
+        b.set(idx, columnIdx, f(idx))
+      }
+
+      override def summaryCount(board: Board) = board.columnCounts(columnIdx)
+
+      override def marks(board: Board): MarkSegment = board.columns(columnIdx).marks
+
+      override def limit: Int = numRows
+    }
 
     override def toString =
       (0 until numRows).map { rowIdx =>
         (0 until numColumns).map(this (rowIdx, _).toString).mkString
       }.mkString("\n")
-  }
-
-  class RowView(rowIdx: Int, val limit: Int) extends SegmentView {
-    override def map[T](board: Board, f: (Mark) => T): IndexedSeq[T] = board.rows(rowIdx).marks.map(f)
-
-    override def update(board: Board, f: (Int) => Mark): Board = (0 until limit).foldLeft(board) { (b, idx) =>
-      b.set(rowIdx, idx, f(idx))
-    }
-
-    override def summaryCount(board: Board) = board.rowCounts(rowIdx)
-
-    override def marks(board: Board): MarkSegment = board.rows(rowIdx).marks
-  }
-
-  class ColumnView(columnIdx: Int, val limit: Int) extends SegmentView {
-    override def map[T](board: Board, f: (Mark) => T): IndexedSeq[T] = board.columns(columnIdx).marks.map(f)
-
-    override def update(board: Board, f: (Int) => Mark): Board = (0 until limit).foldLeft(board) { (b, idx) =>
-      b.set(idx, columnIdx, f(idx))
-    }
-
-    override def summaryCount(board: Board) = board.columnCounts(columnIdx)
-
-    override def marks(board: Board): MarkSegment = board.columns(columnIdx).marks
   }
 
   object Board {
@@ -194,7 +198,7 @@ object BoardSolver {
               }
 
             def fillCertainMarks: Board = {
-              val base: MaybeMarkSegment = view.map[MarkProjection](board, MarkProjection(_))
+              val base: MaybeMarkSegment = view.map[MarkProjection](MarkProjection(_))
 
               val completedSegments = currentSegments.filter(_.isComplete)
 
@@ -209,8 +213,7 @@ object BoardSolver {
                 }
               }
 
-              val update1 = view.update(board, projected(_).asMark)
-              update1
+              view.update(projected(_).asMark)
             }
 
             // Optimisation: if the segment is fully populated, we surely can't change the segment
